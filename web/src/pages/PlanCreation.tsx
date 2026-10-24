@@ -1,11 +1,14 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { createCarePlan, type PlanExerciseInput } from '../api'
+import { useAuth } from '../auth'
 import PlusIcon from '../components/PlusIcon'
 import RomEditor from '../components/RomEditor'
 import SexGenderFields, { type Sex } from '../components/SexGenderFields'
 import { EXERCISES } from '../exercises/library'
 
-// Template only — nothing is saved yet.
+// Saving links the plan to an existing patient account (looked up by email). The patient's
+// name/DOB/age/sex/gender fields here aren't saved yet.
 
 const CUSTOM = 'custom'
 
@@ -54,7 +57,10 @@ export default function PlanCreation() {
   const [gender, setGender] = useState('')
   const [therapyType, setTherapyType] = useState<TherapyType | null>(null)
   const [exercises, setExercises] = useState<ExerciseRow[]>([])
-  const [notice, setNotice] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const { user } = useAuth()
+  const navigate = useNavigate()
   const nextKey = useRef(0)
 
   const today = new Date().toISOString().slice(0, 10)
@@ -79,9 +85,31 @@ export default function PlanCreation() {
     setExercises((rows) => rows.filter((r) => r.key !== key))
   }
 
-  function onSubmit(e: FormEvent) {
+  function toPlanExercise(row: ExerciseRow): PlanExerciseInput {
+    const base = { sets: Number(row.sets), reps: Number(row.reps), side: 'both' as const }
+    if (row.exerciseId === CUSTOM) return { ...base, custom_name: row.name }
+    if (row.exerciseId === '') return base // the API explains what's missing
+    return { ...base, exercise_id: row.exerciseId, target_rom: row.targetRom ?? undefined }
+  }
+
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
-    setNotice(true)
+    if (!user) return
+    setError(null)
+    setSaving(true)
+    try {
+      const plan = await createCarePlan({
+        provider_id: user.id,
+        patient_email: email,
+        therapy_type: therapyType ? (therapyType.toLowerCase() as Lowercase<TherapyType>) : null,
+        exercises: exercises.map(toPlanExercise),
+      })
+      navigate('/provider/home', { state: { savedFor: plan.patient_name } })
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -251,17 +279,18 @@ export default function PlanCreation() {
           </button>
         </Card>
 
-        {notice && (
-          <p role="status" className="rounded-xl bg-amber-50 px-4 py-3 font-medium text-amber-900">
-            This is a template for now — saving care plans comes next.
+        {error && (
+          <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 font-medium text-red-800">
+            {error}
           </p>
         )}
 
         <button
           type="submit"
-          className="rounded-xl bg-blue-700 px-6 py-4 text-xl font-semibold text-white hover:bg-blue-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300"
+          disabled={saving}
+          className="rounded-xl bg-blue-700 px-6 py-4 text-xl font-semibold text-white hover:bg-blue-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 disabled:opacity-60"
         >
-          Save care plan
+          {saving ? 'Saving…' : 'Save care plan'}
         </button>
       </form>
     </main>

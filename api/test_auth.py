@@ -138,7 +138,7 @@ def test_patient_invalid_age_rejected(client, age):
 def test_old_db_gets_age_column(client):
     """A patients table created before the age column existed is upgraded by init_db, keeping its rows."""
     import db
-    db._execute("DROP TABLE patients")
+    db._execute("DROP TABLE patients CASCADE")  # care_plans references patients
     db._execute("""CREATE TABLE patients (patient_id TEXT PRIMARY KEY, name TEXT NOT NULL,
                                           email TEXT UNIQUE NOT NULL, created_at TIMESTAMPTZ NOT NULL)""")
     db._execute("INSERT INTO patients VALUES ('p_old', 'Old Row', 'old@example.com', '2026-01-01T00:00:00Z')")

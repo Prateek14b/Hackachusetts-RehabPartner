@@ -1,10 +1,24 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { listCarePlans, type CarePlanSummary } from '../api'
 import { useAuth } from '../auth'
 import PlusIcon from '../components/PlusIcon'
 
 export default function ProviderHome() {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
+  const savedFor = (useLocation().state as { savedFor?: string } | null)?.savedFor
+  const [plans, setPlans] = useState<CarePlanSummary[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const providerId = user?.id
+
+  useEffect(() => {
+    if (!providerId) return
+    listCarePlans(providerId)
+      .then(setPlans)
+      .catch((err: Error) => setError(err.message))
+  }, [providerId])
+
   if (!user) return null
 
   return (
@@ -31,6 +45,12 @@ export default function ProviderHome() {
         <h1 className="text-3xl font-bold">Welcome, {user.name}</h1>
         <p className="mt-1 text-slate-600">Create a care plan for a patient you've just seen.</p>
 
+        {savedFor && (
+          <p role="status" className="mt-6 rounded-xl bg-green-50 px-4 py-3 font-medium text-green-800">
+            Care plan saved for {savedFor}.
+          </p>
+        )}
+
         <Link
           to="/provider/plans/new"
           className="mt-8 flex items-center gap-4 rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 py-8 transition hover:border-blue-600 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300"
@@ -46,9 +66,35 @@ export default function ProviderHome() {
 
         <section className="mt-10">
           <h2 className="text-xl font-semibold">Care plans</h2>
-          <p className="mt-3 rounded-2xl bg-slate-100 px-6 py-8 text-center text-slate-600">
-            No care plans yet.
-          </p>
+          {error && (
+            <p role="alert" className="mt-3 rounded-xl bg-red-50 px-4 py-3 font-medium text-red-800">
+              {error}
+            </p>
+          )}
+          {!error && plans === null && <p className="mt-3 text-slate-600">Loading…</p>}
+          {plans?.length === 0 && (
+            <p className="mt-3 rounded-2xl bg-slate-100 px-6 py-8 text-center text-slate-600">No care plans yet.</p>
+          )}
+          {plans && plans.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-3">
+              {plans.map((p) => (
+                <li
+                  key={p.plan_id}
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border-2 border-slate-200 bg-white px-6 py-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-lg font-semibold">{p.patient_name}</p>
+                    <p className="truncate text-slate-600">{p.patient_email}</p>
+                  </div>
+                  <p className="text-slate-600">
+                    {p.therapy_type && <span className="capitalize">{p.therapy_type} · </span>}
+                    {p.exercise_count} exercise{p.exercise_count === 1 ? '' : 's'} ·{' '}
+                    {new Date(p.created_at).toLocaleDateString()}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </main>
     </div>

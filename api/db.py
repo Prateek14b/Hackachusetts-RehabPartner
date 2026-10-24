@@ -1,4 +1,4 @@
-"""Postgres data layer for Rehab.io — patients, providers, and the exercise library.
+"""Postgres data layer for Rehab.io — patients, providers, the exercise library, and care plans.
 
 Locally this talks to the Postgres in docker-compose.yml; in AWS it points at Aurora DSQL
 (Postgres-compatible) by setting DATABASE_URL.
@@ -71,6 +71,7 @@ def init_db():
     _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS sex_assigned_at_birth TEXT")
     _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS gender_identity TEXT")
     _init_exercise_tables()
+    _init_care_plan_tables()
 
 def load_shared(filename):
     with open(os.path.join(SHARED_DIR, filename)) as f:
@@ -187,3 +188,80 @@ def login_patient(email):
 
 def list_patients():
     return _fetchall("SELECT * FROM patients ORDER BY created_at")
+
+# --- Care plans ---
+
+def _init_care_plan_tables():
+    _execute("""
+        CREATE TABLE IF NOT EXISTS care_plans (
+            plan_id      TEXT PRIMARY KEY,
+            patient_id   TEXT NOT NULL REFERENCES patients (patient_id),
+            provider_id  TEXT NOT NULL REFERENCES providers (provider_id),
+            therapy_type TEXT CHECK (therapy_type IN ('orthopedic', 'pediatric', 'cardiovascular', 'sports')),
+            created_at   TIMESTAMPTZ NOT NULL
+        )
+    """)
+    _execute("""
+        CREATE TABLE IF NOT EXISTS plan_exercises (
+            plan_id     TEXT NOT NULL REFERENCES care_plans (plan_id) ON DELETE CASCADE,
+            position    INTEGER NOT NULL CHECK (position >= 0),
+            exercise_id TEXT REFERENCES exercises (exercise_id),  -- NULL for a custom ("Other") exercise
+            custom_name TEXT,
+            sets        INTEGER NOT NULL CHECK (sets >= 1),
+            reps        INTEGER NOT NULL CHECK (reps >= 1),
+            target_rom  INTEGER CHECK (target_rom >= 0),  -- the PT's slider value, in the exercise's metric
+            side        TEXT NOT NULL DEFAULT 'both' CHECK (side IN ('left', 'right', 'both')),
+            PRIMARY KEY (plan_id, position),
+            -- either a library exercise (with a target ROM) or a custom one (name only, no ROM)
+            CHECK ((exercise_id IS NULL) <> (custom_name IS NULL)),
+            CHECK ((exercise_id IS NULL) = (target_rom IS NULL))
+        )
+    """)
+
+def get_exercise(exercise_id):
+    return _fetchone("SELECT * FROM exercises WHERE exercise_id = %s", (exercise_id,))
+
+def get_provider(provider_id):
+    return _fetchone("SELECT * FROM providers WHERE provider_id = %s", (provider_id,))
+
+def create_care_plan(provider_id, patient_id, therapy_type, exercises):
+    """Insert the plan and all its exercises in one transaction — all or nothing."""
+    plan_id = f"cp_{uuid4().hex[:8]}"
+    with get_pool().connection() as conn, conn.transaction():
+        conn.execute(
+            "INSERT INTO care_plans (plan_id, patient_id, provider_id, therapy_type, created_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (plan_id, patient_id, provider_id, therapy_type, datetime.now(timezone.utc)))
+        for position, ex in enumerate(exercises):
+            conn.execute(
+                "INSERT INTO plan_exercises (plan_id, position, exercise_id, custom_name, sets, reps, target_rom, side) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (plan_id, position, ex["exercise_id"], ex["custom_name"], ex["sets"], ex["reps"],
+                 ex["target_rom"], ex["side"]))
+    return get_care_plan(plan_id)
+
+def get_care_plan(plan_id):
+    plan = _fetchone("""
+        SELECT cp.*, p.name AS patient_name, p.email AS patient_email
+        FROM care_plans cp JOIN patients p ON p.patient_id = cp.patient_id
+        WHERE cp.plan_id = %s
+    """, (plan_id,))
+    if plan:
+        plan["exercises"] = _fetchall("""
+            SELECT pe.position, pe.exercise_id, COALESCE(e.name, pe.custom_name) AS name, pe.custom_name,
+                   pe.sets, pe.reps, pe.target_rom, e.metric, pe.side
+            FROM plan_exercises pe LEFT JOIN exercises e ON e.exercise_id = pe.exercise_id
+            WHERE pe.plan_id = %s ORDER BY pe.position
+        """, (plan_id,))
+    return plan
+
+def list_care_plans(provider_id):
+    return _fetchall("""
+        SELECT cp.*, p.name AS patient_name, p.email AS patient_email, COUNT(pe.position) AS exercise_count
+        FROM care_plans cp
+        JOIN patients p ON p.patient_id = cp.patient_id
+        LEFT JOIN plan_exercises pe ON pe.plan_id = cp.plan_id
+        WHERE cp.provider_id = %s
+        GROUP BY cp.plan_id, p.name, p.email
+        ORDER BY cp.created_at DESC
+    """, (provider_id,))
