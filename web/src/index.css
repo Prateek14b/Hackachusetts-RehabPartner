@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Large, high-contrast base for older adults */
+html {
+  font-size: 18px;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
