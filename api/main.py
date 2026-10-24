@@ -1,5 +1,5 @@
 """FastAPI for Rehab.io — patient & provider registration and login."""
-import sqlite3
+import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
@@ -57,7 +57,7 @@ def register_provider(body: RegisterBody):
         raise HTTPException(400, "Provider already exists")
     try:
         return db.create_provider(body.name, body.email)
-    except sqlite3.IntegrityError:  # lost a race with a concurrent registration
+    except psycopg.errors.UniqueViolation:  # lost a race with a concurrent registration
         raise HTTPException(400, "Provider already exists")
 
 
@@ -81,7 +81,7 @@ def register_patient(body: PatientRegisterBody):
     try:
         return db.create_patient(body.name, body.email, body.age,
                                  body.sex_assigned_at_birth, body.gender_identity)
-    except sqlite3.IntegrityError:  # lost a race with a concurrent registration
+    except psycopg.errors.UniqueViolation:  # lost a race with a concurrent registration
         raise HTTPException(400, "Patient already exists")
 
 
