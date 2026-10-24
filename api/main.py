@@ -1,182 +1,84 @@
-"""FastAPI application for Rehab.io backend.
-
-Currently handles user management (Clinics, Providers, Patients) with
-DynamoDB Local. More routes are added incrementally in later tasks.
-"""
-
-from datetime import datetime, timezone
-from uuid import uuid4
-
-from fastapi import FastAPI, HTTPException, Query
+"""FastAPI for Rehab.io — patient & provider registration and login."""
+import sqlite3
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field, field_validator
+import db
 
-from dynamodb import (
-    create_all_tables,
-    get_table,
-    query_by_gsi,
-)
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-class ClinicCreate(BaseModel):
-    name: str
-    address: str = ""
-
-
-class ProviderCreate(BaseModel):
-    name: str
-    email: str = ""
-    clinic_id: str
-    role: str = "PT"
-
-
-class PatientCreate(BaseModel):
-    name: str
-    dob: str  # ISO date string e.g. "1952-03-15"
-    age: int
-    sex: str  # "male" or "female"
-    limitations: str = ""
-    clinic_id: str | None = None
-    status: str = "active"
-
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 app = FastAPI(title="Rehab.io API", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+db.init_db()
 
 
-@app.on_event("startup")
-def startup():
-    """Create DynamoDB tables on startup (idempotent)."""
-    create_all_tables()
+class LoginBody(BaseModel):
+    email: EmailStr
+
+    # EmailStr only lowercases the domain; lowercase the whole address so lookups are case-insensitive
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        return v.strip().lower() if isinstance(v, str) else v
 
 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
+class RegisterBody(LoginBody):
+    name: str = Field(min_length=1)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-# ---------------------------------------------------------------------------
-# Clinics
-# ---------------------------------------------------------------------------
-@app.get("/clinics")
-def list_clinics():
-    table = get_table("Clinics")
-    response = table.scan()
-    return response.get("Items", [])
+@app.post("/providers/register")
+def register_provider(body: RegisterBody):
+    if db.login_provider(body.email):
+        raise HTTPException(400, "Provider already exists")
+    try:
+        return db.create_provider(body.name, body.email)
+    except sqlite3.IntegrityError:  # lost a race with a concurrent registration
+        raise HTTPException(400, "Provider already exists")
 
 
-@app.get("/clinics/{clinic_id}")
-def get_clinic(clinic_id: str):
-    table = get_table("Clinics")
-    item = table.get_item(Key={"clinic_id": clinic_id})
-    if "Item" not in item:
-        raise HTTPException(404, "Clinic not found")
-    return item["Item"]
-
-
-@app.post("/clinics")
-def create_clinic(body: ClinicCreate):
-    clinic_id = f"c_{uuid4().hex[:8]}"
-    item = {
-        "clinic_id": clinic_id,
-        "name": body.name,
-        "address": body.address,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    get_table("Clinics").put_item(Item=item)
-    return item
-
-
-# ---------------------------------------------------------------------------
-# Providers (PTs)
-# ---------------------------------------------------------------------------
-@app.get("/providers")
-def list_providers(clinic_id: str | None = Query(None)):
-    if clinic_id:
-        return query_by_gsi("Providers", "clinic_id-index", "clinic_id", clinic_id)
-    table = get_table("Providers")
-    response = table.scan()
-    return response.get("Items", [])
-
-
-@app.get("/providers/{provider_id}")
-def get_provider(provider_id: str):
-    table = get_table("Providers")
-    item = table.get_item(Key={"provider_id": provider_id})
-    if "Item" not in item:
+@app.post("/providers/login")
+def login_provider(body: LoginBody):
+    provider = db.login_provider(body.email)
+    if not provider:
         raise HTTPException(404, "Provider not found")
-    return item["Item"]
+    return provider
 
 
-@app.post("/providers")
-def create_provider(body: ProviderCreate):
-    provider_id = f"pt_{uuid4().hex[:8]}"
-    item = {
-        "provider_id": provider_id,
-        "clinic_id": body.clinic_id,
-        "name": body.name,
-        "email": body.email,
-        "role": body.role,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    get_table("Providers").put_item(Item=item)
-    return item
+@app.get("/providers")
+def list_providers():
+    return db.list_providers()
 
 
-# ---------------------------------------------------------------------------
-# Patients
-# ---------------------------------------------------------------------------
-@app.get("/patients")
-def list_patients(clinic_id: str | None = Query(None)):
-    if clinic_id:
-        return query_by_gsi("Patients", "clinic_id-index", "clinic_id", clinic_id)
-    table = get_table("Patients")
-    response = table.scan()
-    return response.get("Items", [])
+@app.post("/patients/register")
+def register_patient(body: RegisterBody):
+    if db.login_patient(body.email):
+        raise HTTPException(400, "Patient already exists")
+    try:
+        return db.create_patient(body.name, body.email)
+    except sqlite3.IntegrityError:  # lost a race with a concurrent registration
+        raise HTTPException(400, "Patient already exists")
 
 
-@app.get("/patients/{patient_id}")
-def get_patient(patient_id: str):
-    table = get_table("Patients")
-    item = table.get_item(Key={"patient_id": patient_id})
-    if "Item" not in item:
+@app.post("/patients/login")
+def login_patient(body: LoginBody):
+    patient = db.login_patient(body.email)
+    if not patient:
         raise HTTPException(404, "Patient not found")
-    return item["Item"]
+    return patient
 
 
-@app.post("/patients")
-def create_patient(body: PatientCreate):
-    patient_id = f"p_{uuid4().hex[:8]}"
-    item = {
-        "patient_id": patient_id,
-        "clinic_id": body.clinic_id,
-        "name": body.name,
-        "dob": body.dob,
-        "age": body.age,
-        "sex": body.sex,
-        "limitations": body.limitations,
-        "status": body.status,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    get_table("Patients").put_item(Item=item)
-    return item
+@app.get("/patients")
+def list_patients():
+    return db.list_patients()
 
 
-# Lambda handler
 handler = Mangum(app, lifespan="off")
