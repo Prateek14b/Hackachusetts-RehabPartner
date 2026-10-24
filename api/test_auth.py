@@ -113,3 +113,79 @@ def test_concurrent_duplicate_returns_400(client, monkeypatch, role, id_field, p
     monkeypatch.setattr(db, f"login_{role[:-1]}", lambda email: None)
     r = client.post(f"/{role}/register", json={"name": "Jane", "email": "jane@example.com"})
     assert r.status_code == 400
+
+
+# --- Patient age ---
+
+def test_patient_age_optional_defaults_to_null(client):
+    r = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com"})
+    assert r.status_code == 200
+    assert r.json()["age"] is None
+
+
+def test_patient_age_saved(client):
+    created = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com", "age": 72}).json()
+    assert created["age"] == 72
+    assert client.post("/patients/login", json={"email": "jane@example.com"}).json()["age"] == 72
+
+
+@pytest.mark.parametrize("age", [-1, 121, "seventy"])
+def test_patient_invalid_age_rejected(client, age):
+    r = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com", "age": age})
+    assert r.status_code == 422
+
+
+def test_old_db_gets_age_column(client):
+    """A patients table created before the age column existed is upgraded by init_db, keeping its rows."""
+    import db
+    conn = db.get_conn()
+    conn.executescript("""
+        DROP TABLE patients;
+        CREATE TABLE patients (patient_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                               email TEXT UNIQUE NOT NULL, created_at TEXT);
+        INSERT INTO patients VALUES ('p_old', 'Old Row', 'old@example.com', '2026-01-01');
+    """)
+    db.init_db()
+    db.init_db()  # running it again is a no-op
+    row = client.post("/patients/login", json={"email": "old@example.com"}).json()
+    assert row["patient_id"] == "p_old"
+    assert row["age"] is None
+    assert row["sex_assigned_at_birth"] is None and row["gender_identity"] is None
+
+
+# --- Patient sex assigned at birth & gender identity ---
+
+def test_patient_sex_and_gender_optional(client):
+    body = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com"}).json()
+    assert body["sex_assigned_at_birth"] is None
+    assert body["gender_identity"] is None
+
+
+@pytest.mark.parametrize("sex", ["female", "male", "intersex", "prefer_not_to_say"])
+def test_patient_sex_options_saved(client, sex):
+    client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com", "sex_assigned_at_birth": sex})
+    assert client.post("/patients/login", json={"email": "jane@example.com"}).json()["sex_assigned_at_birth"] == sex
+
+
+@pytest.mark.parametrize("sex", ["F", "other", ""])
+def test_patient_invalid_sex_rejected(client, sex):
+    r = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com", "sex_assigned_at_birth": sex})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("gender", ["Non-binary", "Transgender woman", "Two-Spirit", "demiboy (self-described)"])
+def test_patient_gender_identity_free_text(client, gender):
+    client.post("/patients/register", json={"name": "Sam", "email": "sam@example.com", "gender_identity": gender})
+    assert client.post("/patients/login", json={"email": "sam@example.com"}).json()["gender_identity"] == gender
+
+
+def test_patient_gender_identity_trimmed_and_blank_is_null(client):
+    a = client.post("/patients/register", json={"name": "A", "email": "a@example.com", "gender_identity": "  Woman "}).json()
+    b = client.post("/patients/register", json={"name": "B", "email": "b@example.com", "gender_identity": "   "}).json()
+    assert a["gender_identity"] == "Woman"
+    assert b["gender_identity"] is None
+
+
+def test_patient_gender_identity_too_long_rejected(client):
+    r = client.post("/patients/register", json={"name": "A", "email": "a@example.com", "gender_identity": "x" * 51})
+    assert r.status_code == 422

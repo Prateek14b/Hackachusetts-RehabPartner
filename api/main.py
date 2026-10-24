@@ -3,6 +3,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
+from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import db
 
@@ -28,6 +29,21 @@ class RegisterBody(LoginBody):
     @classmethod
     def strip_name(cls, v):
         return v.strip() if isinstance(v, str) else v
+
+
+class PatientRegisterBody(RegisterBody):
+    age: int | None = Field(default=None, ge=0, le=120)
+    # Sex at birth drives range-of-motion norms; gender identity is free text so any identity can be recorded
+    sex_assigned_at_birth: Literal["female", "male", "intersex", "prefer_not_to_say"] | None = None
+    gender_identity: str | None = Field(default=None, max_length=50)
+
+    @field_validator("gender_identity", mode="before")
+    @classmethod
+    def blank_gender_to_none(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
 
 
 @app.get("/health")
@@ -59,11 +75,12 @@ def list_providers():
 
 
 @app.post("/patients/register")
-def register_patient(body: RegisterBody):
+def register_patient(body: PatientRegisterBody):
     if db.login_patient(body.email):
         raise HTTPException(400, "Patient already exists")
     try:
-        return db.create_patient(body.name, body.email)
+        return db.create_patient(body.name, body.email, body.age,
+                                 body.sex_assigned_at_birth, body.gender_identity)
     except sqlite3.IntegrityError:  # lost a race with a concurrent registration
         raise HTTPException(400, "Patient already exists")
 

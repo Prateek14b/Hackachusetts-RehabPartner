@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { login, register, type Role } from '../api'
 import { useAuth } from '../auth'
+import SexGenderFields, { type Sex } from '../components/SexGenderFields'
 
 interface Props {
   role: Role
@@ -16,6 +17,9 @@ export default function AuthPage({ role, mode }: Props) {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [age, setAge] = useState('')
+  const [sex, setSex] = useState<Sex | null>(null)
+  const [gender, setGender] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -23,13 +27,17 @@ export default function AuthPage({ role, mode }: Props) {
 
   const isRegister = mode === 'register'
   const roleLabel = role === 'patient' ? 'Patient' : 'Provider'
+  const showPatientDetails = isRegister && role === 'patient'
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      const u = isRegister ? await register(role, name, email) : await login(role, email)
+      const details = showPatientDetails
+        ? { age: age === '' ? null : Number(age), sex_assigned_at_birth: sex, gender_identity: gender || null }
+        : undefined
+      const u = isRegister ? await register(role, name, email, details) : await login(role, email)
       signIn(u)
       navigate(`/${role}/home`, { replace: true })
     } catch (err) {
@@ -88,6 +96,24 @@ export default function AuthPage({ role, mode }: Props) {
             required
           />
         </label>
+
+        {showPatientDetails && (
+          <>
+            <label className="block font-medium">
+              Age <span className="font-normal text-slate-500">(optional)</span>
+              <input
+                className={`${inputClass} max-w-40`}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={120}
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+              />
+            </label>
+            <SexGenderFields sex={sex} onSexChange={setSex} gender={gender} onGenderChange={setGender} />
+          </>
+        )}
 
         {error && (
           <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 font-medium text-red-800">
