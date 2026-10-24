@@ -1,18 +1,24 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import PlusIcon from '../components/PlusIcon'
+import RomEditor from '../components/RomEditor'
 import SexGenderFields, { type Sex } from '../components/SexGenderFields'
+import { EXERCISES } from '../exercises/library'
 
-// Template only — nothing is saved yet. Exercise options will come from the exercise library later.
+// Template only — nothing is saved yet.
+
+const CUSTOM = 'custom'
 
 const THERAPY_TYPES = ['Orthopedic', 'Pediatric', 'Cardiovascular', 'Sports'] as const
 type TherapyType = (typeof THERAPY_TYPES)[number]
 
 interface ExerciseRow {
   key: number
-  name: string
+  exerciseId: string // a library id, CUSTOM, or '' if not chosen yet
+  name: string // only used for custom exercises
   sets: string
   reps: string
+  targetRom: number | null // degrees; set for library exercises
 }
 
 const inputClass =
@@ -54,11 +60,19 @@ export default function PlanCreation() {
   const today = new Date().toISOString().slice(0, 10)
 
   function addExercise() {
-    setExercises((rows) => [...rows, { key: nextKey.current++, name: '', sets: '3', reps: '10' }])
+    setExercises((rows) => [
+      ...rows,
+      { key: nextKey.current++, exerciseId: '', name: '', sets: '3', reps: '10', targetRom: null },
+    ])
   }
 
-  function updateExercise(key: number, field: 'name' | 'sets' | 'reps', value: string) {
-    setExercises((rows) => rows.map((r) => (r.key === key ? { ...r, [field]: value } : r)))
+  function updateExercise(key: number, changes: Partial<ExerciseRow>) {
+    setExercises((rows) => rows.map((r) => (r.key === key ? { ...r, ...changes } : r)))
+  }
+
+  function chooseExercise(key: number, exerciseId: string) {
+    const motion = EXERCISES.find((m) => m.id === exerciseId)
+    updateExercise(key, { exerciseId, targetRom: motion ? motion.fullRom : null })
   }
 
   function removeExercise(key: number) {
@@ -148,52 +162,81 @@ export default function PlanCreation() {
           )}
 
           <ol className="flex flex-col gap-4">
-            {exercises.map((ex, i) => (
-              <li key={ex.key} className="flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4">
-                <span className="mt-9 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 font-semibold">
-                  {i + 1}
-                </span>
-                <div className="grid flex-1 gap-3 sm:grid-cols-[1fr_6rem_6rem]">
-                  <label className="block font-medium">
-                    Exercise
-                    <input
-                      className={inputClass}
-                      placeholder="e.g. Squat"
-                      value={ex.name}
-                      onChange={(e) => updateExercise(ex.key, 'name', e.target.value)}
-                    />
-                  </label>
-                  <label className="block font-medium">
-                    Sets
-                    <input
-                      className={inputClass}
-                      type="number"
-                      min={1}
-                      value={ex.sets}
-                      onChange={(e) => updateExercise(ex.key, 'sets', e.target.value)}
-                    />
-                  </label>
-                  <label className="block font-medium">
-                    Reps
-                    <input
-                      className={inputClass}
-                      type="number"
-                      min={1}
-                      value={ex.reps}
-                      onChange={(e) => updateExercise(ex.key, 'reps', e.target.value)}
-                    />
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeExercise(ex.key)}
-                  aria-label={`Remove exercise ${i + 1}`}
-                  className="mt-8 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl text-slate-500 hover:bg-red-50 hover:text-red-700"
-                >
-                  ×
-                </button>
-              </li>
-            ))}
+            {exercises.map((ex, i) => {
+              const motion = EXERCISES.find((m) => m.id === ex.exerciseId)
+              return (
+                <li key={ex.key} className="flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4">
+                  <span className="mt-9 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 font-semibold">
+                    {i + 1}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col gap-3">
+                    <div className="grid gap-3 sm:grid-cols-[1fr_6rem_6rem]">
+                      <label className="block font-medium">
+                        Exercise
+                        <select
+                          className={inputClass}
+                          value={ex.exerciseId}
+                          onChange={(e) => chooseExercise(ex.key, e.target.value)}
+                        >
+                          <option value="">Choose…</option>
+                          {EXERCISES.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                          <option value={CUSTOM}>Other (no motion preview)</option>
+                        </select>
+                      </label>
+                      <label className="block font-medium">
+                        Sets
+                        <input
+                          className={inputClass}
+                          type="number"
+                          min={1}
+                          value={ex.sets}
+                          onChange={(e) => updateExercise(ex.key, { sets: e.target.value })}
+                        />
+                      </label>
+                      <label className="block font-medium">
+                        Reps
+                        <input
+                          className={inputClass}
+                          type="number"
+                          min={1}
+                          value={ex.reps}
+                          onChange={(e) => updateExercise(ex.key, { reps: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    {ex.exerciseId === CUSTOM && (
+                      <label className="block font-medium">
+                        Exercise name
+                        <input
+                          className={inputClass}
+                          value={ex.name}
+                          onChange={(e) => updateExercise(ex.key, { name: e.target.value })}
+                        />
+                      </label>
+                    )}
+                    {motion && ex.targetRom !== null && (
+                      <RomEditor
+                        exercise={motion}
+                        value={ex.targetRom}
+                        onChange={(targetRom) => updateExercise(ex.key, { targetRom })}
+                      />
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeExercise(ex.key)}
+                    aria-label={`Remove exercise ${i + 1}`}
+                    className="mt-8 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl text-slate-500 hover:bg-red-50 hover:text-red-700"
+                  >
+                    ×
+                  </button>
+                </li>
+              )
+            })}
           </ol>
 
           <button
