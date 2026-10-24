@@ -3,10 +3,16 @@ import type { Role } from './api'
 import { AuthProvider } from './auth'
 import RequireRole from './components/RequireRole'
 import AuthPage from './pages/AuthPage'
+import ConsentPage from './pages/ConsentPage'
+import HandoutPage from './pages/HandoutPage'
+import JoinPage from './pages/JoinPage'
 import Landing from './pages/Landing'
 import PatientHome from './pages/PatientHome'
+import PlanBriefing from './pages/PlanBriefing'
 import PlanCreation from './pages/PlanCreation'
+import ProgressPage from './pages/ProgressPage'
 import ProviderHome from './pages/ProviderHome'
+import SessionPage from './pages/SessionPage'
 
 const roles: Role[] = ['patient', 'provider']
 
@@ -23,6 +29,12 @@ export default function App() {
           <Route path="/patient/home" element={<RequireRole role="patient"><PatientHome /></RequireRole>} />
           <Route path="/provider/home" element={<RequireRole role="provider"><ProviderHome /></RequireRole>} />
           <Route path="/provider/plans/new" element={<RequireRole role="provider"><PlanCreation /></RequireRole>} />
+          <Route path="/provider/plans/:planId/handout" element={<RequireRole role="provider"><HandoutPage /></RequireRole>} />
+          <Route path="/provider/plans/:planId/progress" element={<RequireRole role="provider"><ProgressPage /></RequireRole>} />
+          <Route path="/join" element={<JoinPage />} />
+          <Route path="/patient/plans/:planId" element={<RequireRole role="patient"><PlanBriefing /></RequireRole>} />
+          <Route path="/patient/plans/:planId/start" element={<RequireRole role="patient"><ConsentPage /></RequireRole>} />
+          <Route path="/patient/plans/:planId/session" element={<RequireRole role="patient"><SessionPage /></RequireRole>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { login, register, type Role } from '../api'
 import { useAuth } from '../auth'
 import SexGenderFields, { type Sex } from '../components/SexGenderFields'
@@ -9,21 +9,30 @@ interface Props {
   mode: 'login' | 'register'
 }
 
+// Where to go after logging in, e.g. back to a QR join link. Only same-site paths are allowed.
+function safeNext(next: string | null): string | null {
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : null
+}
+
 const inputClass =
   'mt-1 w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-lg focus:border-blue-600 focus:outline-none'
 
 export default function AuthPage({ role, mode }: Props) {
   const { user, signIn } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const next = safeNext(searchParams.get('next'))
+  const nextQuery = next ? `?next=${encodeURIComponent(next)}` : ''
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [age, setAge] = useState('')
+  const [dob, setDob] = useState('')
   const [sex, setSex] = useState<Sex | null>(null)
   const [gender, setGender] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  if (user?.role === role) return <Navigate to={`/${role}/home`} replace />
+  if (user?.role === role) return <Navigate to={next ?? `/${role}/home`} replace />
 
   const isRegister = mode === 'register'
   const roleLabel = role === 'patient' ? 'Patient' : 'Provider'
@@ -35,11 +44,16 @@ export default function AuthPage({ role, mode }: Props) {
     setLoading(true)
     try {
       const details = showPatientDetails
-        ? { age: age === '' ? null : Number(age), sex_assigned_at_birth: sex, gender_identity: gender || null }
+        ? {
+            age: age === '' ? null : Number(age),
+            sex_assigned_at_birth: sex,
+            gender_identity: gender || null,
+            dob: dob || null,
+          }
         : undefined
       const u = isRegister ? await register(role, name, email, details) : await login(role, email)
       signIn(u)
-      navigate(`/${role}/home`, { replace: true })
+      navigate(next ?? `/${role}/home`, { replace: true })
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -60,7 +74,7 @@ export default function AuthPage({ role, mode }: Props) {
         {(['login', 'register'] as const).map((m) => (
           <Link
             key={m}
-            to={`/${role}/${m}`}
+            to={`/${role}/${m}${nextQuery}`}
             role="tab"
             aria-selected={mode === m}
             className={`rounded-lg py-2 text-center font-semibold ${
@@ -99,6 +113,20 @@ export default function AuthPage({ role, mode }: Props) {
 
         {showPatientDetails && (
           <>
+            <label className="block font-medium">
+              Date of birth
+              <input
+                className={`${inputClass} max-w-56`}
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                autoComplete="bday"
+              />
+              <span className="mt-1 block text-sm font-normal text-slate-500">
+                Your clinic uses this to confirm a care plan is yours.
+              </span>
+            </label>
             <label className="block font-medium">
               Age <span className="font-normal text-slate-500">(optional)</span>
               <input

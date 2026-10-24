@@ -242,3 +242,18 @@ def test_db_constraints_reject_bad_values(client, column, value):
         db._execute(f"INSERT INTO patients (patient_id, name, email, {column}, created_at) "
                     "VALUES ('p_x', 'X', 'x@example.com', %s, now())", (value,))
     assert _rows("patients") == []
+
+
+# --- Patient date of birth ---
+
+def test_patient_dob_saved(client):
+    created = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com",
+                                                      "dob": "1950-06-01"}).json()
+    assert created["dob"] == "1950-06-01"
+    assert client.post("/patients/login", json={"email": "jane@example.com"}).json()["dob"] == "1950-06-01"
+
+
+@pytest.mark.parametrize("dob", ["2999-01-01", "1800-01-01", "June 1st"])
+def test_patient_invalid_dob_rejected(client, dob):
+    r = client.post("/patients/register", json={"name": "Jane", "email": "jane@example.com", "dob": dob})
+    assert r.status_code == 422

@@ -83,14 +83,37 @@ export default function ProviderHome() {
                   className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border-2 border-slate-200 bg-white px-6 py-4"
                 >
                   <div className="min-w-0">
-                    <p className="text-lg font-semibold">{p.patient_name}</p>
-                    <p className="truncate text-slate-600">{p.patient_email}</p>
+                    <p className="text-lg font-semibold">{p.assigned_name}</p>
+                    <p className="truncate text-slate-600">{p.assigned_email}</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {p.patient_id ? (
+                        <span className="text-green-800">Linked to patient's account</span>
+                      ) : (
+                        <span className="text-amber-800">Waiting for patient to scan QR</span>
+                      )}
+                    </p>
                   </div>
-                  <p className="text-slate-600">
-                    {p.therapy_type && <span className="capitalize">{p.therapy_type} · </span>}
-                    {p.exercise_count} exercise{p.exercise_count === 1 ? '' : 's'} ·{' '}
-                    {new Date(p.created_at).toLocaleDateString()}
-                  </p>
+                  <div className="text-right text-slate-600">
+                    <p>
+                      {p.therapy_type && <span className="capitalize">{p.therapy_type} · </span>}
+                      {p.exercise_count} exercise{p.exercise_count === 1 ? '' : 's'} ·{' '}
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </p>
+                    <div className="flex justify-end gap-4">
+                      <Link
+                        to={`/provider/plans/${p.plan_id}/progress`}
+                        className="font-semibold text-blue-700 underline-offset-4 hover:underline"
+                      >
+                        Progress
+                      </Link>
+                      <Link
+                        to={`/provider/plans/${p.plan_id}/handout`}
+                        className="font-semibold text-blue-700 underline-offset-4 hover:underline"
+                      >
+                        Handout & QR code
+                      </Link>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

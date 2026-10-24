@@ -3,7 +3,8 @@
 Locally this talks to the Postgres in docker-compose.yml; in AWS it points at Aurora DSQL
 (Postgres-compatible) by setting DATABASE_URL.
 """
-import atexit, json, os
+import atexit, hashlib, json, os, secrets
+from datetime import timedelta
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -63,6 +64,7 @@ def init_db():
             sex_assigned_at_birth TEXT
                 CHECK (sex_assigned_at_birth IN ('female', 'male', 'intersex', 'prefer_not_to_say')),
             gender_identity       TEXT,
+            dob         DATE,
             created_at  TIMESTAMPTZ NOT NULL
         )
     """)
@@ -70,8 +72,10 @@ def init_db():
     _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS age INTEGER")
     _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS sex_assigned_at_birth TEXT")
     _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS gender_identity TEXT")
+    _execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS dob DATE")
     _init_exercise_tables()
     _init_care_plan_tables()
+    _init_session_tables()
 
 def load_shared(filename):
     with open(os.path.join(SHARED_DIR, filename)) as f:
@@ -176,12 +180,15 @@ def list_providers():
     return _fetchall("SELECT * FROM providers ORDER BY created_at")
 
 # --- Patients ---
-def create_patient(name, email, age=None, sex_assigned_at_birth=None, gender_identity=None):
+def create_patient(name, email, age=None, sex_assigned_at_birth=None, gender_identity=None, dob=None):
     return _fetchone(
-        "INSERT INTO patients (patient_id,name,email,age,sex_assigned_at_birth,gender_identity,created_at) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-        (f"p_{uuid4().hex[:8]}", name, email, age, sex_assigned_at_birth, gender_identity,
+        "INSERT INTO patients (patient_id,name,email,age,sex_assigned_at_birth,gender_identity,dob,created_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        (f"p_{uuid4().hex[:8]}", name, email, age, sex_assigned_at_birth, gender_identity, dob,
          datetime.now(timezone.utc)))
+
+def get_patient(patient_id):
+    return _fetchone("SELECT * FROM patients WHERE patient_id = %s", (patient_id,))
 
 def login_patient(email):
     return _fetchone("SELECT * FROM patients WHERE email=%s", (email,))
@@ -195,12 +202,26 @@ def _init_care_plan_tables():
     _execute("""
         CREATE TABLE IF NOT EXISTS care_plans (
             plan_id      TEXT PRIMARY KEY,
-            patient_id   TEXT NOT NULL REFERENCES patients (patient_id),
+            -- NULL until the patient scans the QR handout and their name/DOB/email match the assigned ones
+            patient_id   TEXT REFERENCES patients (patient_id),
             provider_id  TEXT NOT NULL REFERENCES providers (provider_id),
             therapy_type TEXT CHECK (therapy_type IN ('orthopedic', 'pediatric', 'cardiovascular', 'sports')),
-            created_at   TIMESTAMPTZ NOT NULL
+            created_at   TIMESTAMPTZ NOT NULL,
+            -- who the PT assigned the plan to (checked when the QR is scanned)
+            assigned_name    TEXT,
+            assigned_dob     DATE,
+            assigned_email   TEXT,
+            status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed')),
+            join_token_hash  TEXT UNIQUE,  -- sha256 of the QR's secret token; the token itself isn't stored
+            token_expires_at TIMESTAMPTZ,
+            claimed_at       TIMESTAMPTZ
         )
     """)
+    _execute("ALTER TABLE care_plans ALTER COLUMN patient_id DROP NOT NULL")
+    for column in ["assigned_name TEXT", "assigned_dob DATE", "assigned_email TEXT",
+                   "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed'))",
+                   "join_token_hash TEXT UNIQUE", "token_expires_at TIMESTAMPTZ", "claimed_at TIMESTAMPTZ"]:
+        _execute(f"ALTER TABLE care_plans ADD COLUMN IF NOT EXISTS {column}")
     _execute("""
         CREATE TABLE IF NOT EXISTS plan_exercises (
             plan_id     TEXT NOT NULL REFERENCES care_plans (plan_id) ON DELETE CASCADE,
@@ -224,26 +245,50 @@ def get_exercise(exercise_id):
 def get_provider(provider_id):
     return _fetchone("SELECT * FROM providers WHERE provider_id = %s", (provider_id,))
 
-def create_care_plan(provider_id, patient_id, therapy_type, exercises):
-    """Insert the plan and all its exercises in one transaction — all or nothing."""
+JOIN_TOKEN_DAYS = 30
+
+def _new_join_token():
+    """A secret for the QR link. Only its hash is stored, so a DB leak doesn't leak working links."""
+    token = secrets.token_urlsafe(24)
+    return token, hash_token(token), datetime.now(timezone.utc) + timedelta(days=JOIN_TOKEN_DAYS)
+
+def hash_token(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+def create_care_plan(provider_id, assigned_name, assigned_dob, assigned_email, therapy_type, exercises):
+    """Insert the plan and all its exercises in one transaction — all or nothing.
+    Returns the plan plus its join token (only available now; it isn't stored)."""
     plan_id = f"cp_{uuid4().hex[:8]}"
+    token, token_hash, expires = _new_join_token()
     with get_pool().connection() as conn, conn.transaction():
         conn.execute(
-            "INSERT INTO care_plans (plan_id, patient_id, provider_id, therapy_type, created_at) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (plan_id, patient_id, provider_id, therapy_type, datetime.now(timezone.utc)))
+            "INSERT INTO care_plans (plan_id, provider_id, therapy_type, created_at, assigned_name, assigned_dob, "
+            "assigned_email, join_token_hash, token_expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (plan_id, provider_id, therapy_type, datetime.now(timezone.utc), assigned_name, assigned_dob,
+             assigned_email, token_hash, expires))
         for position, ex in enumerate(exercises):
             conn.execute(
                 "INSERT INTO plan_exercises (plan_id, position, exercise_id, custom_name, sets, reps, target_rom, side) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (plan_id, position, ex["exercise_id"], ex["custom_name"], ex["sets"], ex["reps"],
                  ex["target_rom"], ex["side"]))
-    return get_care_plan(plan_id)
+    return {**get_care_plan(plan_id), "join_token": token}
+
+def rotate_join_token(plan_id):
+    """New QR token for a plan (e.g. to reprint the handout); the old QR stops working."""
+    token, token_hash, expires = _new_join_token()
+    _execute("UPDATE care_plans SET join_token_hash = %s, token_expires_at = %s WHERE plan_id = %s",
+             (token_hash, expires, plan_id))
+    return token
+
+# The token hash and the assigned DOB/email stay server-side
+_PLAN_COLUMNS = """cp.plan_id, cp.patient_id, cp.provider_id, cp.therapy_type, cp.status, cp.created_at,
+                   cp.claimed_at, cp.token_expires_at, cp.assigned_name, pr.name AS provider_name"""
 
 def get_care_plan(plan_id):
-    plan = _fetchone("""
-        SELECT cp.*, p.name AS patient_name, p.email AS patient_email
-        FROM care_plans cp JOIN patients p ON p.patient_id = cp.patient_id
+    plan = _fetchone(f"""
+        SELECT {_PLAN_COLUMNS}, cp.assigned_dob, cp.assigned_email
+        FROM care_plans cp JOIN providers pr ON pr.provider_id = cp.provider_id
         WHERE cp.plan_id = %s
     """, (plan_id,))
     if plan:
@@ -255,13 +300,117 @@ def get_care_plan(plan_id):
         """, (plan_id,))
     return plan
 
-def list_care_plans(provider_id):
-    return _fetchall("""
-        SELECT cp.*, p.name AS patient_name, p.email AS patient_email, COUNT(pe.position) AS exercise_count
+def _list_plans(where, param):
+    return _fetchall(f"""
+        SELECT {_PLAN_COLUMNS}, cp.assigned_email, COUNT(pe.position) AS exercise_count
         FROM care_plans cp
-        JOIN patients p ON p.patient_id = cp.patient_id
+        JOIN providers pr ON pr.provider_id = cp.provider_id
         LEFT JOIN plan_exercises pe ON pe.plan_id = cp.plan_id
-        WHERE cp.provider_id = %s
-        GROUP BY cp.plan_id, p.name, p.email
+        WHERE {where} = %s
+        GROUP BY cp.plan_id, pr.name
         ORDER BY cp.created_at DESC
-    """, (provider_id,))
+    """, (param,))
+
+def list_care_plans(provider_id):
+    return _list_plans("cp.provider_id", provider_id)
+
+def list_patient_care_plans(patient_id):
+    return _list_plans("cp.patient_id", patient_id)
+
+def find_plan_by_token(token):
+    return _fetchone("SELECT * FROM care_plans WHERE join_token_hash = %s", (hash_token(token),))
+
+def link_plan_to_patient(plan_id, patient_id):
+    """Link the plan unless another patient already claimed it (checked in the same statement)."""
+    row = _fetchone("""
+        UPDATE care_plans SET patient_id = %s, claimed_at = COALESCE(claimed_at, now())
+        WHERE plan_id = %s AND (patient_id IS NULL OR patient_id = %s)
+        RETURNING plan_id
+    """, (patient_id, plan_id, patient_id))
+    return row is not None
+
+# --- Camera consent and exercise sessions ---
+
+def _init_session_tables():
+    _execute("""
+        CREATE TABLE IF NOT EXISTS consents (
+            consent_id  TEXT PRIMARY KEY,
+            patient_id  TEXT NOT NULL REFERENCES patients (patient_id),
+            plan_id     TEXT NOT NULL REFERENCES care_plans (plan_id) ON DELETE CASCADE,
+            kind        TEXT NOT NULL CHECK (kind IN ('camera')),
+            version     TEXT NOT NULL,  -- which wording of the consent screen the patient agreed to
+            agreed_at   TIMESTAMPTZ NOT NULL
+        )
+    """)
+    _execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id  TEXT PRIMARY KEY,
+            plan_id     TEXT NOT NULL REFERENCES care_plans (plan_id) ON DELETE CASCADE,
+            patient_id  TEXT NOT NULL REFERENCES patients (patient_id),
+            started_at  TIMESTAMPTZ NOT NULL,
+            ended_at    TIMESTAMPTZ NOT NULL,
+            completed   BOOLEAN NOT NULL,  -- every set of every exercise done (false = "done for the day" early)
+            CHECK (ended_at >= started_at)
+        )
+    """)
+    # one row per plan exercise; targets are copied so history survives later plan edits
+    _execute("""
+        CREATE TABLE IF NOT EXISTS session_exercises (
+            session_id     TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+            position       INTEGER NOT NULL,
+            exercise_id    TEXT REFERENCES exercises (exercise_id),
+            name           TEXT NOT NULL,
+            sets_target    INTEGER NOT NULL,
+            reps_target    INTEGER NOT NULL,  -- per set
+            target_rom     INTEGER,
+            sets_completed INTEGER NOT NULL CHECK (sets_completed >= 0),
+            reps_completed INTEGER NOT NULL CHECK (reps_completed >= 0),
+            reps_at_target INTEGER NOT NULL CHECK (reps_at_target >= 0),  -- reps that reached the PT's target
+            peak_rom       INTEGER CHECK (peak_rom >= 0),  -- furthest the patient got this session (camera-tracked only)
+            pain           SMALLINT CHECK (pain BETWEEN 0 AND 10),
+            PRIMARY KEY (session_id, position),
+            CHECK (reps_at_target <= reps_completed)
+        )
+    """)
+
+def record_consent(patient_id, plan_id, version):
+    return _fetchone(
+        "INSERT INTO consents (consent_id, patient_id, plan_id, kind, version, agreed_at) "
+        "VALUES (%s, %s, %s, 'camera', %s, %s) RETURNING *",
+        (f"cs_{uuid4().hex[:8]}", patient_id, plan_id, version, datetime.now(timezone.utc)))
+
+def latest_consent(patient_id, plan_id):
+    return _fetchone("SELECT * FROM consents WHERE patient_id = %s AND plan_id = %s "
+                     "ORDER BY agreed_at DESC LIMIT 1", (patient_id, plan_id))
+
+def create_session(plan_id, patient_id, started_at, ended_at, completed, exercises):
+    """Save a session and its per-exercise results in one transaction; the plan becomes active."""
+    session_id = f"ss_{uuid4().hex[:8]}"
+    with get_pool().connection() as conn, conn.transaction():
+        conn.execute("INSERT INTO sessions (session_id, plan_id, patient_id, started_at, ended_at, completed) "
+                     "VALUES (%s, %s, %s, %s, %s, %s)", (session_id, plan_id, patient_id, started_at, ended_at,
+                                                         completed))
+        for ex in exercises:
+            conn.execute("""
+                INSERT INTO session_exercises (session_id, position, exercise_id, name, sets_target, reps_target,
+                    target_rom, sets_completed, reps_completed, reps_at_target, peak_rom, pain)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (session_id, ex["position"], ex["exercise_id"], ex["name"], ex["sets_target"], ex["reps_target"],
+                  ex["target_rom"], ex["sets_completed"], ex["reps_completed"], ex["reps_at_target"],
+                  ex["peak_rom"], ex["pain"]))
+        conn.execute("UPDATE care_plans SET status = 'active' WHERE plan_id = %s AND status = 'pending'", (plan_id,))
+    return session_id
+
+def list_sessions(plan_id):
+    """Sessions newest first, each with its exercises in plan order."""
+    sessions = _fetchall("SELECT * FROM sessions WHERE plan_id = %s ORDER BY started_at DESC", (plan_id,))
+    rows = _fetchall("""
+        SELECT se.* FROM session_exercises se JOIN sessions s USING (session_id)
+        WHERE s.plan_id = %s ORDER BY se.position
+    """, (plan_id,))
+    by_session = {}
+    for r in rows:
+        by_session.setdefault(r.pop("session_id"), []).append(r)
+    for s in sessions:
+        s["exercises"] = by_session.get(s["session_id"], [])
+    return sessions

@@ -7,8 +7,8 @@ import RomEditor from '../components/RomEditor'
 import SexGenderFields, { type Sex } from '../components/SexGenderFields'
 import { EXERCISES } from '../exercises/library'
 
-// Saving links the plan to an existing patient account (looked up by email). The patient's
-// name/DOB/age/sex/gender fields here aren't saved yet.
+// The plan is saved for the named patient (name, DOB, email). They don't need an account yet: the
+// QR handout links it to their account once they log in and their details match.
 
 const CUSTOM = 'custom'
 
@@ -100,11 +100,13 @@ export default function PlanCreation() {
     try {
       const plan = await createCarePlan({
         provider_id: user.id,
+        patient_name: name,
+        patient_dob: dob,
         patient_email: email,
         therapy_type: therapyType ? (therapyType.toLowerCase() as Lowercase<TherapyType>) : null,
         exercises: exercises.map(toPlanExercise),
       })
-      navigate('/provider/home', { state: { savedFor: plan.patient_name } })
+      navigate(`/provider/plans/${plan.plan_id}/handout`, { state: { joinToken: plan.join_token } })
     } catch (err) {
       setError((err as Error).message)
     } finally {
