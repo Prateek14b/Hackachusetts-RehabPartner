@@ -1,0 +1,115 @@
+{
+  "_comment": "Exercise library shared by the API (seeds the exercises tables) and the web app (stick figure + live webcam check). Each exercise is measured by ONE angle at the middle landmark of anglePoints, using MediaPipe landmark names from poseLandmarks.json. The value shown to the PT and stored as target_rom = angleOffset + angleSign * (interior angle in degrees, 0-180).",
+  "exercises": [
+    {
+      "id": "squat",
+      "name": "Squat",
+      "metric": "Knee bend",
+      "hint": "How low the hips go",
+      "fullRom": 120,
+      "minRom": 10,
+      "angleOffset": 180,
+      "angleSign": -1,
+      "anglePoints": {
+        "left": [
+          "LEFT_HIP",
+          "LEFT_KNEE",
+          "LEFT_ANKLE"
+        ],
+        "right": [
+          "RIGHT_HIP",
+          "RIGHT_KNEE",
+          "RIGHT_ANKLE"
+        ]
+      }
+    },
+    {
+      "id": "toe_touch",
+      "name": "Toe touch",
+      "metric": "Hip bend",
+      "hint": "How far down the hands reach",
+      "fullRom": 140,
+      "minRom": 10,
+      "angleOffset": 180,
+      "angleSign": -1,
+      "anglePoints": {
+        "left": [
+          "LEFT_SHOULDER",
+          "LEFT_HIP",
+          "LEFT_KNEE"
+        ],
+        "right": [
+          "RIGHT_SHOULDER",
+          "RIGHT_HIP",
+          "RIGHT_KNEE"
+        ]
+      }
+    },
+    {
+      "id": "shoulder_raise",
+      "name": "Shoulder raise (forward)",
+      "metric": "Arm raise",
+      "hint": "How high the arm goes",
+      "fullRom": 180,
+      "minRom": 10,
+      "angleOffset": 0,
+      "angleSign": 1,
+      "anglePoints": {
+        "left": [
+          "LEFT_HIP",
+          "LEFT_SHOULDER",
+          "LEFT_ELBOW"
+        ],
+        "right": [
+          "RIGHT_HIP",
+          "RIGHT_SHOULDER",
+          "RIGHT_ELBOW"
+        ]
+      }
+    },
+    {
+      "id": "chair_stand",
+      "name": "Sit-to-stand (chair stand)",
+      "metric": "Knee straightening",
+      "hint": "How far up from the chair they rise",
+      "fullRom": 90,
+      "minRom": 10,
+      "angleOffset": -90,
+      "angleSign": 1,
+      "anglePoints": {
+        "left": [
+          "LEFT_HIP",
+          "LEFT_KNEE",
+          "LEFT_ANKLE"
+        ],
+        "right": [
+          "RIGHT_HIP",
+          "RIGHT_KNEE",
+          "RIGHT_ANKLE"
+        ]
+      }
+    },
+    {
+      "id": "seated_knee_extension",
+      "name": "Seated knee extension",
+      "metric": "Knee straightening",
+      "hint": "How straight the leg gets",
+      "fullRom": 90,
+      "minRom": 10,
+      "angleOffset": -90,
+      "angleSign": 1,
+      "anglePoints": {
+        "left": [
+          "LEFT_HIP",
+          "LEFT_KNEE",
+          "LEFT_ANKLE"
+        ],
+        "right": [
+          "RIGHT_HIP",
+          "RIGHT_KNEE",
+          "RIGHT_ANKLE"
+        ]
+      }
+    }
+  ]
+}

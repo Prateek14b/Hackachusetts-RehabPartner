@@ -1,4 +1,4 @@
-"""FastAPI for Rehab.io — patient & provider registration and login."""
+"""FastAPI for Rehab.io — patient & provider registration/login, and the exercise library."""
 import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,6 +96,16 @@ def login_patient(body: LoginBody):
 @app.get("/patients")
 def list_patients():
     return db.list_patients()
+
+
+@app.get("/pose-landmarks")
+def list_pose_landmarks():
+    return db.list_pose_landmarks()
+
+
+@app.get("/exercises")
+def list_exercises():
+    return db.list_exercises()
 
 
 handler = Mangum(app, lifespan="off")

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ExerciseMotion } from '../exercises/library'
+import { figureJoint, type ExerciseMotion } from '../exercises/library'
 import StickFigure from './StickFigure'
 
 const REP_SECONDS = 3
@@ -54,6 +54,9 @@ export default function RomEditor({ exercise, value, onChange }: Props) {
         <StickFigure
           pose={exercise.pose(shownRom)}
           target={exercise.pose(value)}
+          marker={exercise.marker}
+          highlight={[figureJoint(exercise.anglePoints.left.names[1])]}
+          chair={exercise.chair}
           label={`${exercise.name} to ${value}° ${exercise.metric.toLowerCase()}`}
         />
       </div>

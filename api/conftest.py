@@ -19,7 +19,7 @@ from main import app  # noqa: E402
 @pytest.fixture
 def client():
     # fresh tables for every test
-    db._execute("DROP TABLE IF EXISTS patients")
-    db._execute("DROP TABLE IF EXISTS providers")
+    for table in ["exercise_angle_points", "exercises", "pose_landmarks", "patients", "providers"]:
+        db._execute(f"DROP TABLE IF EXISTS {table} CASCADE")
     db.init_db()
     yield TestClient(app)

@@ -1,4 +1,4 @@
-import { HEAD_RADIUS, type Point, type Skeleton } from '../exercises/library'
+import { HEAD_RADIUS, type Chair, type Joint, type Point, type Skeleton } from '../exercises/library'
 
 const WIDTH = 220
 const HEIGHT = 200
@@ -20,24 +20,38 @@ function Bones({ s, className }: { s: Skeleton; className: string }) {
   )
 }
 
+function ChairShape({ chair }: { chair: Chair }) {
+  const seat = { y: GROUND_Y - chair.seatY, front: ORIGIN_X + chair.front, back: ORIGIN_X + chair.back }
+  return (
+    <g className="stroke-slate-400" strokeWidth={3} strokeLinecap="round" fill="none">
+      <line x1={seat.back} x2={seat.front} y1={seat.y} y2={seat.y} />
+      <line x1={seat.front} x2={seat.front} y1={seat.y} y2={GROUND_Y} />
+      <line x1={seat.back} x2={seat.back} y1={seat.y - 50} y2={GROUND_Y} />
+    </g>
+  )
+}
+
 interface Props {
   pose: Skeleton
   target?: Skeleton // faint outline of the target pose
+  marker: Joint // dashed line marks this body part's height at the target
+  highlight: Joint[] // joints drawn as dots (e.g. the measured angle's vertex)
+  chair?: Chair
   label: string
 }
 
-export default function StickFigure({ pose, target, label }: Props) {
+export default function StickFigure({ pose, target, marker, highlight, chair, label }: Props) {
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="h-auto w-full" role="img" aria-label={label}>
       <line x1={10} x2={WIDTH - 10} y1={GROUND_Y} y2={GROUND_Y} className="stroke-slate-300" strokeWidth={2} />
+      {chair && <ChairShape chair={chair} />}
       {target && (
         <>
-          {/* how low the hips should go */}
           <line
             x1={10}
             x2={WIDTH - 10}
-            y1={sy(target.hip)}
-            y2={sy(target.hip)}
+            y1={sy(target[marker])}
+            y2={sy(target[marker])}
             className="stroke-blue-400"
             strokeWidth={1.5}
             strokeDasharray="5 5"
@@ -46,8 +60,9 @@ export default function StickFigure({ pose, target, label }: Props) {
         </>
       )}
       <Bones s={pose} className="stroke-slate-800 [stroke-width:5]" />
-      <circle cx={sx(pose.hip)} cy={sy(pose.hip)} r={4} className="fill-blue-700" />
-      <circle cx={sx(pose.knee)} cy={sy(pose.knee)} r={4} className="fill-blue-700" />
+      {highlight.map((j) => (
+        <circle key={j} cx={sx(pose[j])} cy={sy(pose[j])} r={4} className="fill-blue-700" />
+      ))}
     </svg>
   )
 }
